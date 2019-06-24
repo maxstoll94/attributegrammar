@@ -1,0 +1,98 @@
+{
+data Sign = Negative | Zero | Positive deriving (Eq, Ord)
+}
+
+attr Program
+  syn instanceSA :: {Instance (S.Set (M.Map Var Sign))}
+
+sem Program
+  | Program
+    lhs.instanceSA = {
+      ( ( (==), S.union, S.singleton (M.empty) )
+        , @procs.transferSA `M.union` @stat.transferSA
+        , S.singleton (M.empty)
+        , S.singleton @loc.init
+        , @loc.flow
+        , @loc.interFlow
+        )
+    }
+
+attr Stat Proc Procs
+  syn transferSA use {M.union} {M.empty} :: {M.Map Label (TransferFunction (S.Set (M.Map Var Sign)))}
+
+sem Stat
+  | Skip Continue Break While IfThenElse BAssign
+    +transferSA = M.insert @loc.label (Unary id)
+  | IAssign
+    +transferSA = M.insert @loc.label (Unary (S.foldl S.union S.empty . S.map (\signs -> S.map (flip (M.insert @name) signs) $ evaluateSA @val.copy signs)))
+  | Call
+    +transferSA = M.insert @labelCall   (Unary id)
+    +transferSA = M.insert @labelReturn (Unary id)
+
+sem Proc
+  | Proc
+    +transferSA = M.insert @labelEntry (Unary id)
+    +transferSA = M.insert @labelExit  (Unary id)
+
+{
+evaluateSA :: IExpr -> M.Map Var Sign -> S.Set Sign
+evaluateSA (IConst n) _  | n > 0            = S.singleton Positive
+                         | n < 0            = S.singleton Negative
+                         | otherwise        = S.singleton Zero
+evaluateSA (Var x) signs | M.member x signs = S.singleton (signs M.! x)
+                         | otherwise        = S.empty
+evaluateSA (Deref a)  signs                 = error "unknown variable type \"Deref\""
+evaluateSA expression signs                 = let
+  plus, minus, times, divide :: Sign -> Sign -> S.Set Sign
+  Positive `plus` Positive   = S.singleton Positive
+  Positive `plus` Negative   = S.fromList [Positive, Negative, Zero]
+  Negative `plus` Positive   = S.fromList [Positive, Negative, Zero]
+  Negative `plus` Negative   = S.singleton Negative
+  Positive `plus` Zero       = S.singleton Positive
+  Negative `plus` Zero       = S.singleton Negative
+  Zero     `plus` Positive   = S.singleton Positive
+  Zero     `plus` Negative   = S.singleton Negative
+  Zero     `plus` Zero       = S.singleton Zero
+
+  Positive `minus` Positive  = S.fromList [Positive, Negative, Zero]
+  Positive `minus` Negative  = S.singleton Positive
+  Negative `minus` Positive  = S.singleton Negative
+  Negative `minus` Negative  = S.fromList [Positive, Negative, Zero]
+  Positive `minus` Zero      = S.singleton Positive
+  Negative `minus` Zero      = S.singleton Negative
+  Zero     `minus` Positive  = S.singleton Negative
+  Zero     `minus` Negative  = S.singleton Positive
+  Zero     `minus` Zero      = S.singleton Zero
+
+  Positive `times` Positive  = S.singleton Positive
+  Positive `times` Negative  = S.singleton Negative
+  Negative `times` Positive  = S.singleton Negative
+  Negative `times` Negative  = S.singleton Positive
+  Positive `times` Zero      = S.singleton Zero
+  Negative `times` Zero      = S.singleton Zero
+  Zero     `times` Positive  = S.singleton Zero
+  Zero     `times` Negative  = S.singleton Zero
+  Zero     `times` Zero      = S.singleton Zero
+
+  Positive `divide` Positive = S.singleton Positive
+  Positive `divide` Negative = S.singleton Negative
+  Negative `divide` Positive = S.singleton Negative
+  Negative `divide` Negative = S.singleton Positive
+  Positive `divide` Zero     = S.empty
+  Negative `divide` Zero     = S.empty
+  Zero     `divide` Positive = S.singleton Zero
+  Zero     `divide` Negative = S.singleton Zero
+  Zero     `divide` Zero     = S.empty
+
+  left     :: IExpr
+  right    :: IExpr
+  (operator, left, right) = case expression of
+    (Plus   left right) -> (plus,   left, right)
+    (Minus  left right) -> (minus,  left, right)
+    (Times  left right) -> (times,  left, right)
+    (Divide left right) -> (divide, left, right)
+  in case (evaluateSA left signs, evaluateSA right signs) of
+    (a, b) | S.null a  -> b
+           | S.null b  -> a
+           | otherwise -> S.unions [a' `operator` b' | a' <- S.toList a, b' <- S.toList b]
+}

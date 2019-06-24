@@ -1,0 +1,37 @@
+optpragmas
+{
+{-# LANGUAGE LambdaCase #-}
+}
+
+data E
+  | Add b1 :: B
+        b2 :: B
+  | Leaf b :: B
+  | Split e1 :: E
+          e2 :: E
+deriving E : Show
+
+data B
+  | Bin b1 :: B
+        b2 :: B
+  | One
+  | Zero
+deriving B : Show
+
+data R
+  | Root
+    e :: E
+deriving R : Show
+
+set Every = E B R
+
+-- Provide a syntesized copy attrubute for every production
+sem Every syn copy :: self
+
+attr B
+  syn decimal :: { Int }
+
+sem B
+  | Zero lhs.decimal = 0
+  | One lhs.decimal = 1
+  | Bin lhs.decimal = @b1.decimal * @b1.decimal + @b2.decimal

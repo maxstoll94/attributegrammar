@@ -1,0 +1,36 @@
+attr Program
+  syn instanceSLV :: {Instance (S.Set Var)}
+
+sem Program
+  | Program
+    lhs.instanceSLV = {
+      ( ( S.isSubsetOf, S.union, S.empty )
+        , @procs.transferSLV `M.union` @stat.transferSLV
+        , S.empty
+        , @loc.finals
+        , @loc.flowR
+        , @loc.interFlowR
+        )
+    }
+
+attr Stat Proc Procs
+  syn transferSLV use {M.union} {M.empty} :: {M.Map Label (TransferFunction (S.Set Var))}
+
+sem Stat
+  | Skip Continue Break BAssign
+    +transferSLV = M.insert @loc.label (Unary id)
+  | IAssign
+    +transferSLV = {M.insert @loc.label (Unary (\slv -> if S.member @name slv
+      then S.delete @name slv `S.union` (exprVars (I @val.copy))
+      else S.delete @name slv
+    ))}
+  | While IfThenElse
+    +transferSLV = M.insert @loc.label (Unary (S.union (exprVars (B @cond.copy))))
+  | Call
+    +transferLV = M.insert @labelCall   (error "Transfer functions are not supported in maximal fixed point iteration")
+    +transferLV = M.insert @labelReturn (error "Transfer functions are not supported in maximal fixed point iteration")
+
+sem Proc
+  | Proc
+    +transferLV = M.insert @labelEntry (error "Transfer functions are not supported in maximal fixed point iteration")
+    +transferLV = M.insert @labelExit  (error "Transfer functions are not supported in maximal fixed point iteration")

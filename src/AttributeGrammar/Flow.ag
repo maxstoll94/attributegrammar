@@ -1,0 +1,60 @@
+attr Program
+  syn flow       :: {S.Set Flow}
+  syn flowR      :: {S.Set Flow}
+  syn interFlow  :: {S.Set InterFlow}
+  syn interFlowR :: {S.Set InterFlow}
+
+sem Program
+  | Program
+    loc.flow       = @stat.flow `S.union` @procs.flow `S.union` @loc.callToProc `S.union` @loc.procToCall
+    loc.flowR      = {S.map (\case
+      InterFlow s t -> InterFlow t s
+      IntraFlow s t -> IntraFlow t s
+    ) @loc.flow}
+    loc.interFlowR = S.map (\(lc, lx, ln, lr) -> (lr, ln, lc, lc)) @loc.interFlow
+    lhs.flow       = @loc.flow
+    lhs.flowR      = @loc.flowR
+    lhs.interFlow  = @loc.interFlow
+    lhs.interFlowR = @loc.interFlowR
+
+attr Proc Procs Stat IExpr BExpr Exprs Expr
+  syn flow use {S.union} {S.empty} :: {S.Set Flow}
+
+sem Stat
+  | Seq        +flow = S.union (S.map (flip IntraFlow @stat2.init) @stat1.finals)
+  | While      +flow = S.union (S.map (flip IntraFlow @loc.label ) @stat.finals)
+               +flow = S.insert (IntraFlow @loc.label @stat.init)
+  | IfThenElse +flow = S.insert (IntraFlow @loc.label @stat1.init)
+               +flow = S.insert (IntraFlow @loc.label @stat2.init)
+
+sem Proc
+  | Proc       +flow = S.insert (IntraFlow @loc.labelEntry @stat.init)
+               +flow = S.union (S.map (flip IntraFlow @loc.labelExit) @stat.finals)
+
+-- Flow for procs and calls are a bit more difficult
+-- First collect all calls and procs with theirname, entry label and exit label
+-- at the root of the AST
+-- Then add all label entry of calls to the entry of productions with a
+-- corresponding name, and add all label exits of productions to label exits
+-- of calls with a corresponding name
+{
+fst3 :: (a, b, c) -> a
+fst3 (a, _, _) = a
+snd3 :: (a, b, c) -> b
+snd3 (_, b, _) = b
+trd3 :: (a, b, c) -> c
+trd3 (_, _, c) = c
+}
+
+attr Proc Procs Stat IExpr BExpr Exprs Expr
+  syn procs use {++} {[]} :: {[(String, Label, Label)]}
+  syn calls use {++} {[]} :: {[(String, Label, Label)]}
+
+sem Proc | Proc +procs = (@name, @loc.labelEntry, @loc.labelExit)   :
+sem Stat | Call +calls = (@name, @loc.labelCall,  @loc.labelReturn) :
+
+sem Program | Program
+  loc.calls      = @stat.calls ++ @procs.calls
+  loc.callToProc = S.fromList [InterFlow (snd3 stat) (snd3 proc)            | proc <- @procs.procs, stat <- @loc.calls, fst3 proc == fst3 stat]
+  loc.procToCall = S.fromList [InterFlow (trd3 proc) (trd3 stat)            | proc <- @procs.procs, stat <- @loc.calls, fst3 proc == fst3 stat]
+  loc.interFlow  = S.fromList [(snd3 stat, snd3 proc, trd3 proc, trd3 stat) | proc <- @procs.procs, stat <- @loc.calls, fst3 proc == fst3 stat]

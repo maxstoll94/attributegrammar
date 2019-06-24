@@ -1,0 +1,107 @@
+{
+data Constant = Bottom | Constant Int | Top deriving (Eq, Ord)
+}
+
+attr Program
+  syn instanceCP :: {Instance (M.Map Var Constant)}
+
+sem Program
+  | Program
+    lhs.instanceCP = {
+      ( ( compareLatticeCP, joinLatticeCP, M.fromSet (const Bottom) @loc.vars )
+        , @procs.transferCP `M.union` @stat.transferCP
+        , M.fromSet (const Top) @loc.vars
+        , S.singleton @loc.init
+        , @loc.flow
+        , @loc.interFlow
+        )
+    }
+
+attr Stat Proc Procs
+  syn transferCP use {M.union} {M.empty} :: {M.Map Label (TransferFunction (M.Map Var Constant))}
+
+sem Stat
+  | Skip Continue Break While IfThenElse BAssign
+    +transferCP = M.insert @loc.label (Unary id)
+  | IAssign
+    +transferCP = M.insert @loc.label (Unary (\constants -> M.insert @name (evaluateCP (constants M.!) @val.copy) constants))
+  | Call
+    +transferCP = {M.insert @labelCall (Unary (\constants -> let
+      varNames :: [Var]
+      varReturn :: Var
+      (Proc' _ _ _ varNames varReturn _) = @lhs.procLookup M.! @name
+
+      varNames' :: [Var]
+      varNames' = varReturn : varNames
+
+      varConstants :: [Constant]
+      varConstants = Top : L.map (\case
+        I expr -> evaluateCP (constants M.!) expr
+        B expr -> Top
+        ) @params.copy
+
+      constants' :: M.Map Var Constant
+      constants' = M.fromList (zipWith (,) varNames' varConstants)
+
+      in constants' `M.union` constants))}
+    +transferCP = {M.insert @labelReturn (Binary (\constantsCall constantsReturn -> let
+      varNames :: [Var]
+      varReturn :: Var
+      (Proc' _ _ _ varNames varReturn _) = @lhs.procLookup M.! @name
+
+      varNames' :: [Var]
+      varNames' = varReturn:varNames
+
+      constantsParams, constantsOut :: M.Map Var Constant
+      constantsParams = M.filterWithKey (\k _ -> L.elem k varNames') constantsCall
+      constantsOut    = M.singleton @out (constantsReturn M.! varReturn)
+
+      in constantsOut `M.union` constantsParams `M.union` constantsReturn))}
+
+sem Proc
+  | Proc
+    +transferCP = M.insert @labelEntry (Unary id)
+    +transferCP = M.insert @labelExit  (Unary id)
+
+{
+compareLatticeCP :: M.Map Var Constant -> M.Map Var Constant -> Bool
+compareLatticeCP l1 l2 = M.foldr (&&) True $ M.intersectionWith (\a b -> case (a, b) of
+  (Bottom    , Bottom    ) -> True
+  (Bottom    , Constant _) -> True
+  (Bottom    , Top       ) -> True
+  (Constant _, Bottom    ) -> False
+  (Constant a, Constant b) -> a == b
+  (Constant _, Top       ) -> True
+  (Top       , Top       ) -> True
+  (Top       , Bottom    ) -> False
+  (Top       , Constant _) -> False
+  ) l1 l2
+
+joinLatticeCP :: M.Map Var Constant -> M.Map Var Constant -> M.Map Var Constant
+joinLatticeCP l1 l2 = M.unionWith (\a b -> case (a, b) of
+  (Top       , a         ) -> Top
+  (_         , Top       ) -> Top
+  (Bottom    , Bottom    ) -> Bottom
+  (a         , Bottom    ) -> a
+  (Bottom    , b         ) -> b
+  (Constant a, Constant b) -> if a == b then Constant a else Top
+  ) l1 l2
+
+evaluateCP :: (Var -> Constant) -> IExpr -> Constant
+evaluateCP _         (IConst n) = Constant n
+evaluateCP constants (Var x)    = constants x
+evaluateCP constants (Deref a)  = error "unknown variable type \"Deref\""
+evaluateCP constants expression = let
+  -- operator :: (Num a) => a -> a -> a
+  left     :: IExpr
+  right    :: IExpr
+  (operator, left, right) = case expression of
+    (Plus   left right) -> ((+), left, right)
+    (Minus  left right) -> ((-), left, right)
+    (Times  left right) -> ((*), left, right)
+    (Divide left right) -> (div, left, right)
+  in case (evaluateCP constants left, evaluateCP constants right) of
+    (Constant a, Constant b) -> Constant (a `operator` b)
+    (Bottom,     Bottom)     -> Bottom
+    _                        -> Top
+}

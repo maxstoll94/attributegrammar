@@ -1,0 +1,19 @@
+data E
+  | Add b1 :: B
+        b2 :: B
+  | Leaf b :: B
+  | Split e1 :: E
+          e2 :: E
+deriving E : Show
+
+data B
+  | Bin b1 :: B
+        b2 :: B
+  | One
+  | Zero
+deriving B : Show
+
+data R
+  | Root
+    e :: E
+deriving R : Show

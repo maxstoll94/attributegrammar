@@ -1,0 +1,38 @@
+attr Program
+  syn instanceAE :: {Instance (S.Set Expr)}
+
+sem Program
+  | Program
+    lhs.instanceAE = {
+      ( ( flip S.isSubsetOf, S.intersection, @loc.nonTrivialExprs )
+        , @procs.transferAE `M.union` @stat.transferAE
+        , S.empty
+        , S.singleton @loc.init
+        , @loc.flow
+        , @loc.interFlow
+        )
+    }
+
+attr Stat Proc Procs
+  syn transferAE use {M.union} {M.empty} :: {M.Map Label (TransferFunction (S.Set Expr))}
+
+sem Stat
+  | Skip Continue Break BAssign
+    loc.killAE = id
+    loc.genAE  = id
+  | IAssign
+    loc.killAE = S.filter (S.notMember @name . exprVars)
+    loc.genAE  = S.union (@loc.killAE @val.nonTrivialExprs)
+  | IfThenElse While
+    loc.killAE = id
+    loc.genAE  = S.union @cond.nonTrivialExprs
+  | Skip Continue Break IAssign IfThenElse While
+    +transferAE = M.insert @loc.label (Unary (@loc.genAE . @loc.killAE))
+  | Call
+    +transferAE = M.insert @labelCall   (error "Transfer functions are not supported in maximal fixed point iteration")
+    +transferAE = M.insert @labelReturn (error "Transfer functions are not supported in maximal fixed point iteration")
+
+sem Proc
+  | Proc
+    +transferAE = M.insert @labelEntry (error "Transfer functions are not supported in maximal fixed point iteration")
+    +transferAE = M.insert @labelExit  (error "Transfer functions are not supported in maximal fixed point iteration")
